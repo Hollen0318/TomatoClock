@@ -18,6 +18,14 @@ class TomatoFocusApp:
         self.master = master
         self.master.title("Tomato Focus")
 
+        # Optional: Load an icon for the main window
+        # Make sure the path is correct if you have an icon file
+        try:
+            self.icon_image = tk.PhotoImage(file="tomato.png")
+            self.master.iconphoto(False, self.icon_image)
+        except Exception as e:
+            print("Could not load icon:", e)
+
         # Configuration variables
         self.focus_minutes = DEFAULT_FOCUS_MINUTES
         self.rest_minutes = DEFAULT_REST_MINUTES
@@ -26,10 +34,6 @@ class TomatoFocusApp:
         # Main frame
         self.main_frame = tk.Frame(self.master, padx=10, pady=10)
         self.main_frame.pack()
-
-        # Title label
-        self.title_label = tk.Label(self.main_frame, text="Tomato Focus", font=("Arial", 16, "bold"))
-        self.title_label.pack(pady=5)
 
         # Target entry
         self.target_label = tk.Label(self.main_frame, text="Next Focus Target:")
@@ -42,7 +46,7 @@ class TomatoFocusApp:
         self.add_button.pack()
 
         # Start focus section
-        self.timer_label = tk.Label(self.main_frame, text="", font=("Arial", 14))
+        self.timer_label = tk.Label(self.main_frame, text="")
         self.timer_label.pack(pady=10)
 
         self.start_button = tk.Button(self.main_frame, text="Start Focus", command=self.start_focus)
@@ -53,11 +57,18 @@ class TomatoFocusApp:
         self.mute_check.pack(pady=5)
 
         # Buttons to open other windows
-        self.config_button = tk.Button(self.main_frame, text="Configuration", command=self.open_config_window)
-        self.config_button.pack(side=tk.LEFT, padx=5, pady=5)
+        button_frame = tk.Frame(self.main_frame)
+        button_frame.pack(pady=5)
 
-        self.history_button = tk.Button(self.main_frame, text="View History", command=self.open_history_window)
-        self.history_button.pack(side=tk.LEFT, padx=5, pady=5)
+        self.config_button = tk.Button(button_frame, text="Setting", command=self.open_config_window)
+        self.config_button.pack(side=tk.LEFT, padx=5)
+
+        self.history_button = tk.Button(button_frame, text="History", command=self.open_history_window)
+        self.history_button.pack(side=tk.LEFT, padx=5)
+
+        # Label for current focus target
+        self.current_focus_label = tk.Label(self.main_frame, text=f"Current Focus: {self._get_last_target()}")
+        self.current_focus_label.pack(pady=5)
 
         # Timer thread variables
         self.focus_thread = None
@@ -71,7 +82,7 @@ class TomatoFocusApp:
         if not os.path.exists(CSV_FILE):
             with open(CSV_FILE, "w", newline="", encoding='utf-8') as f:
                 writer = csv.writer(f)
-                # The columns could be: date, time, target
+                # The columns: Date, Time, Target
                 writer.writerow(["Date", "Time", "Target"])
 
     def add_target(self):
@@ -83,14 +94,16 @@ class TomatoFocusApp:
             with open(CSV_FILE, "a", newline="", encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow([date_str, time_str, target_text])
-            
+
             messagebox.showinfo("Success", f"Target added: {target_text}")
             self.target_entry.delete(0, tk.END)
         else:
             messagebox.showwarning("Warning", "Please enter a target.")
 
     def start_focus(self):
-        """Starts the focus period in a separate thread."""
+        """Starts the focus period in a separate thread, automatically loading
+           the newest (last) target from the CSV as the current focus.
+        """
         # Stop any existing timer thread
         self.stop_event.set()
 
@@ -98,9 +111,30 @@ class TomatoFocusApp:
         self.stop_event.clear()
         self.timer_label.config(text="")
 
+        # Load the newest target from the CSV history
+        last_target = self._get_last_target()
+        if last_target:
+            self.current_focus_label.config(text=f"Current Focus: {last_target}")
+        else:
+            self.current_focus_label.config(text="Current Focus: None")
+
         # Create a new thread
         self.focus_thread = threading.Thread(target=self._run_focus_timer, daemon=True)
         self.focus_thread.start()
+
+    def _get_last_target(self):
+        """Return the most recently added target from CSV, or None if none exists."""
+        if not os.path.exists(CSV_FILE):
+            return None
+        with open(CSV_FILE, "r", encoding='utf-8') as f:
+            reader = csv.reader(f)
+            next(reader, None)  # Skip header
+            rows = list(reader)
+            if rows:
+                # The last row has the newest target
+                # row format: [Date, Time, Target]
+                return rows[-1][2]  # Index 2 is the 'Target' field
+        return None
 
     def _run_focus_timer(self):
         # Focus countdown
@@ -108,12 +142,13 @@ class TomatoFocusApp:
         self._countdown(total_seconds, "Focus")
 
         # After focus completes, play sound if not muted
-        if not self.mute_sound.get():
+        if not self.stop_event.is_set() and not self.mute_sound.get():
             self._play_sound()
 
         # Rest countdown
-        total_seconds = self.rest_minutes * 60
-        self._countdown(total_seconds, "Rest")
+        if not self.stop_event.is_set():
+            total_seconds = self.rest_minutes * 60
+            self._countdown(total_seconds, "Rest")
 
     def _countdown(self, total_seconds, mode_label):
         """Count down from total_seconds while updating timer label in the GUI."""
@@ -131,7 +166,6 @@ class TomatoFocusApp:
 
     def _update_label(self, text):
         """Update the timer label from any thread."""
-        # We use `after` to schedule the update in the main thread
         self.master.after(0, lambda: self.timer_label.config(text=text))
 
     def _play_sound(self):
@@ -183,7 +217,8 @@ class TomatoFocusApp:
         search_var = tk.StringVar()
         search_entry = tk.Entry(search_frame, textvariable=search_var)
         search_entry.pack(side=tk.LEFT, padx=5)
-        search_button = tk.Button(search_frame, text="Submit", command=lambda: self._search_targets(search_var.get(), listbox))
+        search_button = tk.Button(search_frame, text="Submit",
+                                  command=lambda: self._search_targets(search_var.get(), listbox))
         search_button.pack(side=tk.LEFT, padx=5)
 
         # Listbox for displaying results
@@ -206,7 +241,8 @@ class TomatoFocusApp:
 
 def main():
     root = tk.Tk()
-    root.geometry("800x600")  # Width = 800, Height = 600
+    # Adjust window size as needed
+    root.geometry("240x280")
     app = TomatoFocusApp(root)
     root.mainloop()
 

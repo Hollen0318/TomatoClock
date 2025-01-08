@@ -94,9 +94,16 @@ class TomatoFocusApp:
             with open(CSV_FILE, "a", newline="", encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow([date_str, time_str, target_text])
-
-            messagebox.showinfo("Success", f"Target added: {target_text}")
+            
             self.target_entry.delete(0, tk.END)
+
+            # Load the newest target from the CSV history
+            last_target = self._get_last_target()
+            if last_target:
+                self.current_focus_label.config(text=f"Current Focus: {last_target}")
+            else:
+                self.current_focus_label.config(text="Current Focus: None")
+
         else:
             messagebox.showwarning("Warning", "Please enter a target.")
 
